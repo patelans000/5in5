@@ -1,0 +1,1237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Nova Blast</title>
+
+<!-- ============================================================
+  NOVA BLAST — prototype v0.1
+  ============================================================
+  FILE STRUCTURE (use Ctrl+F to jump to any section):
+  
+  [CSS]
+    COLOUR PALETTE         — all hex vars, change here to reskin
+    GLOBAL RESET           — box-sizing, body, font
+    SCREEN SYSTEM          — how screens show/hide
+    TITLE SCREEN CSS       — logo box, layout
+    BUTTON STYLES          — .btn and .btn-small
+    CUTSCENE CSS           — dialogue box, Nova portrait, skip btn
+    GAME SCREEN CSS        — canvas, HUD (lives + score)
+    GAME OVER CSS          — end screen layout
+
+  [HTML]
+    TITLE SCREEN           — logo placeholder + START button
+    CUTSCENE SCREEN        — Nova portrait + dialogue box + SKIP
+    GAME SCREEN            — canvas + HUD overlay
+    GAME OVER SCREEN       — score display + RETRY button
+
+  [JAVASCRIPT]
+    CONFIG                 — every tunable number lives here
+    HIGH SCORE             — load/save via window.storage
+    SCREEN MANAGER         — showScreen() helper
+    CUTSCENE / TYPEWRITER  — dialogue line playback
+    GAME SETUP             — canvas resize, initGame, startGame
+    INPUT                  — keyboard listeners
+    DRAW: PLAYER SHIP      — swap with ctx.drawImage when ready
+    DRAW: ENEMIES          — 3 alien types (scout/bruiser/swooper)
+    DRAW: ASTEROIDS        — polygon rock + HP pips + blink
+    DRAW: BULLET           — lilac laser bolt
+    DRAW: STARS            — scrolling starfield
+    UPDATE: STARS          — scroll stars downward
+    UPDATE: PLAYER         — movement + fire input
+    UPDATE: BULLETS        — move bullets, cull off-screen
+    DIFFICULTY             — dino-style score-tier system
+    UPDATE: ENEMIES        — spawn + move + cull
+    UPDATE: ASTEROIDS      — spawn + spin + move + cull
+    COLLISION DETECTION    — bullet/enemy, bullet/asteroid, player hits
+    HUD UPDATE             — score + lives display
+    MAIN LOOP              — requestAnimationFrame game loop
+    GAME OVER              — stop loop, save score, show screen
+    BUTTON WIRING          — click handlers for all buttons
+    INIT                   — kick everything off
+  ============================================================ -->
+
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap');
+
+/* ============================================================
+   COLOUR PALETTE
+   Change any hex here and it ripples through the whole game.
+   ============================================================ */
+:root {
+  --color-bg:        #1a1035;  /* deep space navy — main background */
+  --color-bg-panel:  #261848;  /* slightly lighter — dialogue / UI panels */
+  --color-border:    #d4b8f0;  /* lilac — borders, outlines */
+  --color-text:      #fff0f8;  /* soft white — all main text */
+  --color-text-dim:  #b89cc8;  /* muted lilac — labels, secondary text */
+  --color-primary:   #f5a7c7;  /* bubblegum pink — buttons, player ship */
+  --color-secondary: #d4b8f0;  /* lilac — bullets, cockpit */
+  --color-mint:      #a8e6cf;  /* mint — enemy hit flash colour */
+  --color-peach:     #ffcba4;  /* peach — engine flames */
+  --color-danger:    #ff8fab;  /* hot pink — damage flash, hearts */
+  --color-star:      #f5a7c7;  /* pink — bright stars */
+  --color-warning:   #ffcba4;  /* peach — dialogue name label */
+}
+
+/* ============================================================
+   GLOBAL RESET
+   ============================================================ */
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: var(--color-bg);
+  overflow: hidden;                        /* no scrollbars ever */
+  font-family: 'Press Start 2P', monospace;
+  color: var(--color-text);
+}
+
+/* ============================================================
+   SCREEN SYSTEM
+   All screens stack in the same position. Only the one with
+   class="active" is visible. showScreen() in JS controls this.
+   ============================================================ */
+#app {
+  position: relative;
+  width: 100%;
+  height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.screen {
+  position: absolute;
+  top: 0; left: 0;
+  width: 100%;
+  height: 100%;
+  display: none;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+}
+.screen.active { display: flex; } /* JS adds/removes this */
+
+/* ============================================================
+   TITLE SCREEN
+   ============================================================ */
+#title-screen { gap: 40px; }
+
+/* LOGO PLACEHOLDER (520×160px)
+   When you have your Nova Blast logo PNG, replace this div with:
+   <img src="logo.png" width="520" height="160" alt="Nova Blast">
+   Or set background: url('logo.png') center/contain no-repeat;
+   on #logo-placeholder and remove the <h1> inside it. */
+#logo-placeholder {
+  width: min(80vw, 520px);
+  height: 160px;
+  border: 4px solid var(--color-border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 16px;
+  /* striped placeholder pattern — remove when you add the real logo */
+  background: repeating-linear-gradient(
+    45deg,
+    var(--color-bg-panel), var(--color-bg-panel) 10px,
+    #1f1240 10px, #1f1240 20px
+  );
+}
+#logo-placeholder h1 {
+  font-size: clamp(16px, 4vw, 28px);
+  line-height: 1.6;
+  color: var(--color-primary);
+  text-shadow: 3px 3px 0 #000;
+  margin: 0;
+}
+
+/* ============================================================
+   BUTTON STYLES
+   .btn       — big button (START, RETRY)
+   .btn-small — small button (SKIP)
+   ============================================================ */
+.btn {
+  font-family: 'Press Start 2P', monospace;
+  font-size: 16px;
+  padding: 16px 32px;
+  background: var(--color-primary);
+  color: #1a1035;                /* dark text on pink bg */
+  border: none;
+  border-bottom: 6px solid #c0607e; /* pressed shadow */
+  cursor: pointer;
+  letter-spacing: 1px;
+}
+.btn:active {
+  border-bottom-width: 2px;
+  transform: translateY(4px);   /* little press-down effect */
+}
+.btn-small {
+  font-size: 10px;
+  padding: 10px 16px;
+  border-bottom-width: 4px;
+}
+
+/* ============================================================
+   CUTSCENE SCREEN
+   Layout: dialogue box on the left, Nova portrait floating
+   off the bottom-right corner of the box.
+   ============================================================ */
+#cutscene-screen {
+  width: 100%;
+  height: 100%;
+  justify-content: center;
+  position: relative;
+}
+
+/* Stage is the container for the dialogue box + portrait.
+   Portrait is positioned absolutely relative to this. */
+#cutscene-stage {
+  position: relative;
+  width: min(90vw, 640px);
+  margin-top: -40px; /* nudge the whole thing up a bit */
+}
+
+/* Dialogue box — text stays left, right side reserved for Nova */
+#dialogue-box {
+  width: 100%;
+  min-height: 140px;
+  background: var(--color-bg-panel);
+  border: 4px solid var(--color-border);
+  padding: 20px;
+  padding-right: 260px;   /* ← keeps text from going under Nova */
+  padding-bottom: 40px;   /* ← space for the ▼ prompt */
+  font-size: 12px;
+  line-height: 2;
+  position: relative;     /* needed so portrait's absolute pos works */
+}
+
+/* NOVA PORTRAIT PLACEHOLDER (320×400px)
+   When your Nova PNG is ready, replace the <span> inside
+   #cutscene-portrait with:
+   <img src="portrait.png" style="width:100%;height:100%;object-fit:contain;">
+   Then remove border-radius:50% and the dashed border from this rule. */
+#cutscene-portrait {
+  position: absolute;
+  top: -60px;       /* how far she pokes above the dialogue box */
+  bottom: -60px;    /* how far she pokes below */
+  right: -50px;     /* how far she hangs off the right edge */
+  width: 260px;
+  border: 4px dashed var(--color-border); /* placeholder outline — remove with real art */
+  border-radius: 50%;                      /* placeholder circle — remove with real art */
+  background: #05070f;                     /* placeholder bg — remove with real art */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  font-size: 10px;
+  line-height: 1.7;
+  color: var(--color-text-dim);
+  transform: rotate(12deg);   /* slight tilt — keep or adjust with real art */
+  z-index: 1;
+  pointer-events: none;       /* clicks pass through to dialogue box */
+}
+
+/* Speaker name above the dialogue text (e.g. "NOVA") */
+#dialogue-name {
+  color: var(--color-warning);
+  margin-bottom: 10px;
+  display: block;
+}
+
+/* The actual typed text */
+#dialogue-text {
+  color: var(--color-text);
+  white-space: pre-wrap;
+}
+
+/* Blinking "continue" prompt bottom-left of dialogue box */
+#dialogue-continue {
+  position: absolute;
+  bottom: 10px;
+  left: 16px;
+  font-size: 10px;
+  color: var(--color-text-dim);
+  animation: blink 1s infinite step-end;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* SKIP button — absolute top-right of the screen */
+#skip-btn {
+  position: absolute;
+  top: 20px;
+  right: 20px;
+}
+
+/* ============================================================
+   GAME SCREEN
+   ============================================================ */
+#game-screen { width: 100%; height: 100%; }
+
+/* Canvas scales to window via JS resizeCanvas().
+   image-rendering: pixelated keeps sprites sharp when scaled. */
+#game-canvas {
+  display: block;
+  background: var(--color-bg);
+  image-rendering: pixelated;
+}
+
+/* HUD overlay — sits on top of the canvas, pointer-events off
+   so it doesn't block mouse clicks on the canvas */
+#hud {
+  position: absolute;
+  top: 16px;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 24px;
+  font-size: 12px;
+  pointer-events: none;
+}
+
+/* Lives display (left side) — currently ♥ ♥ ♥ text
+   TO SWAP: replace ♥ characters with
+   <img src="heart.png" width="16" height="16"> per life in updateHUD() */
+#hud .lives { color: var(--color-danger); letter-spacing: 6px; }
+
+/* Score box (right side) */
+#hud .score-box { text-align: right; color: var(--color-text); }
+#hud .score-box .label { color: var(--color-text-dim); font-size: 9px; }
+
+/* ============================================================
+   GAME OVER SCREEN
+   ============================================================ */
+#gameover-screen { gap: 24px; }
+#gameover-screen h2 { color: var(--color-danger); font-size: 22px; }
+#gameover-screen p  { font-size: 12px; color: var(--color-text-dim); line-height: 2; }
+#final-score, #final-high { color: var(--color-primary); }
+</style>
+</head>
+<body>
+
+<div id="app">
+
+  <!-- ============================================================
+    TITLE SCREEN
+    Shows: Nova Blast logo + START button
+    START button → startCutscene()
+    ============================================================ -->
+  <div id="title-screen" class="screen active">
+
+    <!-- LOGO — replace this whole div with your real logo image -->
+    <div id="logo-placeholder">
+      <h1>NOVA<br>BLAST</h1>
+    </div>
+
+    <button class="btn" id="start-btn">START</button>
+  </div>
+
+
+  <!-- ============================================================
+    CUTSCENE SCREEN
+    Shows: Nova portrait + typewriter dialogue + SKIP button
+    Click dialogue box or press Space → advanceDialogue()
+    SKIP button → skips straight to startGame()
+    Edit dialogue lines in CONFIG.dialogue.lines in the JS below
+    ============================================================ -->
+  <div id="cutscene-screen" class="screen">
+
+    <!-- SKIP button — always visible top-right -->
+    <button class="btn btn-small" id="skip-btn">SKIP ▶</button>
+
+    <!-- Stage wraps both the dialogue box and Nova's portrait -->
+    <div id="cutscene-stage">
+
+      <!-- Dialogue box — click to advance lines -->
+      <div id="dialogue-box">
+        <span id="dialogue-name">NOVA</span>   <!-- speaker name -->
+        <div id="dialogue-text"></div>          <!-- typewriter text goes here -->
+        <div id="dialogue-continue">▼ click / press space</div>
+      </div>
+
+      <!-- Nova portrait — replace <span> with <img src="portrait.png"> -->
+      <div id="cutscene-portrait">
+        <span>[ Nova<br>portrait<br>here ]</span>
+      </div>
+
+    </div>
+  </div>
+
+
+  <!-- ============================================================
+    GAME SCREEN
+    Shows: the canvas + HUD overlay
+    All gameplay draws onto #game-canvas via the JS game loop
+    ============================================================ -->
+  <div id="game-screen" class="screen">
+
+    <canvas id="game-canvas"></canvas>
+
+    <!-- HUD — overlaid on top of canvas, not part of the canvas draw -->
+    <div id="hud">
+
+      <!-- Lives — left side. updateHUD() rewrites this. -->
+      <div class="lives" id="lives-display">♥ ♥ ♥</div>
+
+      <!-- Score — right side, stacked high score above current -->
+      <div class="score-box">
+        <div class="label">HIGH SCORE</div>
+        <div id="high-score-display">0</div>
+        <div class="label" style="margin-top:8px;">SCORE</div>
+        <div id="score-display">0</div>
+      </div>
+
+    </div>
+  </div>
+
+
+  <!-- ============================================================
+    GAME OVER SCREEN
+    Shows: final score + high score + RETRY button
+    RETRY button → startGame() (skips cutscene, goes straight in)
+    ============================================================ -->
+  <div id="gameover-screen" class="screen">
+    <h2>GAME OVER</h2>
+    <p>
+      SCORE &nbsp;&nbsp;: <span id="final-score">0</span><br>
+      BEST &nbsp;&nbsp;&nbsp;: <span id="final-high">0</span>
+    </p>
+    <button class="btn" id="restart-btn">RETRY</button>
+  </div>
+
+</div><!-- /#app -->
+
+
+<script>
+/* ============================================================
+   CONFIG
+   Every number you'd want to tweak is in here.
+   Nothing in the game logic is hardcoded — it all reads from CONFIG.
+   ============================================================ */
+const CONFIG = {
+
+  /* Canvas internal resolution — the game always renders at this
+     size, then JS scales it up to fit the window. */
+  canvas: { width: 480, height: 640 },
+
+  /* Player ship */
+  player: {
+    width: 32,         /* sprite size in game pixels */
+    height: 32,
+    speed: 5,          /* pixels per frame left/right */
+    color: '#f5a7c7',  /* bubblegum pink (coded placeholder) */
+    fireCooldown: 250, /* ms between shots — lower = faster fire */
+    startLives: 3,
+    startY: 640 - 60   /* vertical start position */
+  },
+
+  /* Player bullet */
+  bullet: {
+    width: 4,
+    height: 14,
+    speed: 9,          /* pixels per frame upward */
+    color: '#d4b8f0'   /* lilac */
+  },
+
+  /* ── DIFFICULTY TIERS (dino-game style) ──────────────────────
+     When score crosses a threshold, the next tier kicks in.
+     Add more tiers or adjust numbers to tune the difficulty curve.
+     enemySpeed    = pixels per frame downward
+     spawnInterval = ms between enemy spawns (lower = more enemies)
+     asteroidSpeed = pixels per frame downward */
+  difficulty: [
+    { score: 0,   enemySpeed: 1.2, spawnInterval: 1400, asteroidSpeed: 0.7 },
+    { score: 100, enemySpeed: 1.8, spawnInterval: 1100, asteroidSpeed: 0.9 },
+    { score: 250, enemySpeed: 2.4, spawnInterval: 850,  asteroidSpeed: 1.1 },
+    { score: 500, enemySpeed: 3.0, spawnInterval: 620,  asteroidSpeed: 1.4 },
+    { score: 900, enemySpeed: 3.8, spawnInterval: 420,  asteroidSpeed: 1.7 }
+  ],
+
+  /* ── ALIEN TYPES ──────────────────────────────────────────────
+     3 variants — scout, bruiser, swooper.
+     color  = main body colour
+     accent = secondary / shadow colour
+     points = score awarded on kill */
+  enemy: {
+    width: 28,
+    height: 28,
+    types: [
+      { id: 'scout',   color: '#7be38a', accent: '#3db84f', points: 10 },
+      { id: 'bruiser', color: '#4cd964', accent: '#2a9e40', points: 20 },
+      { id: 'swooper', color: '#a8f0b0', accent: '#5ecf70', points: 15 }
+    ]
+  },
+
+  /* ── ASTEROIDS ────────────────────────────────────────────────
+     minSize/maxSize = radius in game pixels
+     hp              = shots to destroy (HP pips shown above rock)
+     blinkHz         = flashes per second when hit */
+  asteroid: {
+    minSize: 38,
+    maxSize: 58,
+    spawnInterval: 3200,  /* ms between asteroid spawns */
+    hp: 4,
+    points: 25,
+    color:      '#7a6a8a',  /* muted purple-grey */
+    colorDark:  '#3d2f55',  /* crater shadow */
+    colorLight: '#b8a0cc',  /* highlight */
+    blinkHz: 8
+  },
+
+  /* ── HIT FLASH ────────────────────────────────────────────────
+     duration       = how long an enemy/asteroid flash lasts (ms)
+     playerDuration = how long the player flickers when hit (ms)
+     *Color         = the colour things flash to on hit */
+  flash: {
+    duration:       140,
+    playerDuration: 700,
+    enemyColor:     '#a8e6cf',  /* mint */
+    asteroidColor:  '#ffcba4',  /* peach */
+    playerColor:    '#ff8fab'   /* hot pink */
+  },
+
+  /* ── STARFIELD ────────────────────────────────────────────────*/
+  star: {
+    count: 70,   /* number of stars on screen */
+    speed: 0.5   /* pixels per frame downward scroll */
+  },
+
+  /* ── CUTSCENE DIALOGUE ────────────────────────────────────────
+     name = speaker label shown above the text
+     text = the line that types out character by character
+     Add as many lines as you want — they play in order. */
+  dialogue: {
+    typeSpeedMs: 28,  /* ms per character — lower = faster typing */
+    lines: [
+      { name: 'NOVA', text: "Hey there, soldier! I really need your help!" },
+      { name: 'NOVA', text: "The outer colonies went dark and I can't reach anyone out there." },
+      { name: 'NOVA', text: "You're the only pilot I trust to fly out and find out what happened." },
+      { name: 'NOVA', text: "Stay sharp. I'll be watching your signal the whole way." }
+    ]
+  }
+
+}; /* end CONFIG */
+
+
+/* ============================================================
+   HIGH SCORE
+   Saved to window.storage so it persists across sessions.
+   Falls back to in-memory (resets on refresh) if storage fails.
+   ============================================================ */
+let highScore = 0;
+
+async function loadHighScore() {
+  try {
+    const result = await window.storage.get('nova-blast-highscore');
+    if (result && result.value) highScore = parseInt(result.value, 10) || 0;
+  } catch (e) {
+    highScore = 0; /* no saved score yet — first run */
+  }
+  document.getElementById('high-score-display').textContent = highScore;
+}
+
+async function saveHighScore(score) {
+  if (score <= highScore) return; /* only save if it's a new best */
+  highScore = score;
+  try {
+    await window.storage.set('nova-blast-highscore', String(score));
+  } catch (e) {
+    /* storage unavailable — score lives in memory this session */
+  }
+}
+
+
+/* ============================================================
+   SCREEN MANAGER
+   showScreen('title' | 'cutscene' | 'game' | 'gameover')
+   Removes .active from all screens, adds it to the target.
+   ============================================================ */
+const screens = {
+  title:    document.getElementById('title-screen'),
+  cutscene: document.getElementById('cutscene-screen'),
+  game:     document.getElementById('game-screen'),
+  gameover: document.getElementById('gameover-screen')
+};
+
+function showScreen(name) {
+  Object.values(screens).forEach(s => s.classList.remove('active'));
+  screens[name].classList.add('active');
+}
+
+
+/* ============================================================
+   CUTSCENE / TYPEWRITER DIALOGUE
+   playDialogueLine() — types out the current line character by character
+   advanceDialogue()  — click/space handler:
+                        first press finishes the line instantly,
+                        second press moves to the next line,
+                        after the last line it calls startGame()
+   ============================================================ */
+let dialogueIndex = 0;
+let typeInterval  = null;
+
+function startCutscene() {
+  dialogueIndex = 0;
+  showScreen('cutscene');
+  playDialogueLine();
+}
+
+function playDialogueLine() {
+  clearInterval(typeInterval);
+  const line   = CONFIG.dialogue.lines[dialogueIndex];
+  const nameEl = document.getElementById('dialogue-name');
+  const textEl = document.getElementById('dialogue-text');
+  nameEl.textContent = line.name;
+  textEl.textContent = '';
+
+  let charIndex = 0;
+  typeInterval = setInterval(() => {
+    textEl.textContent += line.text[charIndex];
+    charIndex++;
+    if (charIndex >= line.text.length) clearInterval(typeInterval);
+  }, CONFIG.dialogue.typeSpeedMs);
+}
+
+function advanceDialogue() {
+  const line   = CONFIG.dialogue.lines[dialogueIndex];
+  const textEl = document.getElementById('dialogue-text');
+
+  /* First press while typing → finish line instantly */
+  if (textEl.textContent.length < line.text.length) {
+    clearInterval(typeInterval);
+    textEl.textContent = line.text;
+    return;
+  }
+
+  /* Line finished → next line, or start game if last line */
+  dialogueIndex++;
+  if (dialogueIndex >= CONFIG.dialogue.lines.length) {
+    startGame();
+  } else {
+    playDialogueLine();
+  }
+}
+
+/* Click the dialogue box to advance */
+document.getElementById('dialogue-box').addEventListener('click', advanceDialogue);
+
+/* SKIP button skips the whole cutscene */
+document.getElementById('skip-btn').addEventListener('click', () => {
+  clearInterval(typeInterval);
+  startGame();
+});
+
+
+/* ============================================================
+   GAME SETUP
+   ============================================================ */
+const canvas = document.getElementById('game-canvas');
+const ctx    = canvas.getContext('2d');
+
+/* resizeCanvas — called on load and on window resize.
+   Keeps a fixed 480×640 internal resolution,
+   scales the canvas element to fill the window. */
+function resizeCanvas() {
+  const scale = Math.min(
+    window.innerWidth  / CONFIG.canvas.width,
+    window.innerHeight / CONFIG.canvas.height
+  );
+  canvas.width        = CONFIG.canvas.width;
+  canvas.height       = CONFIG.canvas.height;
+  canvas.style.width  = (CONFIG.canvas.width  * scale) + 'px';
+  canvas.style.height = (CONFIG.canvas.height * scale) + 'px';
+}
+window.addEventListener('resize', resizeCanvas);
+
+/* Game state variables — all reset by initGame() on each new game */
+let stars = [];
+let player, bullets, enemies, asteroids;
+let score, lives, lastShot, lastSpawn, lastAsteroidSpawn;
+let playerFlashUntil, gameRunning, keys;
+
+/* initGame — resets all state for a fresh game */
+function initGame() {
+  /* Player starts centered near the bottom */
+  player = {
+    x:      CONFIG.canvas.width / 2 - CONFIG.player.width / 2,
+    y:      CONFIG.player.startY,
+    width:  CONFIG.player.width,
+    height: CONFIG.player.height
+  };
+
+  bullets           = [];   /* active bullet objects */
+  enemies           = [];   /* active enemy objects */
+  asteroids         = [];   /* active asteroid objects */
+  score             = 0;
+  lives             = CONFIG.player.startLives;
+  lastShot          = 0;    /* timestamp of last bullet fired */
+  lastSpawn         = 0;    /* timestamp of last enemy spawn */
+  lastAsteroidSpawn = 0;    /* timestamp of last asteroid spawn */
+  playerFlashUntil  = 0;    /* timestamp when player flash ends */
+  gameRunning       = true;
+  keys              = {};   /* currently held keys */
+
+  /* Generate starfield */
+  stars = [];
+  for (let i = 0; i < CONFIG.star.count; i++) {
+    stars.push({
+      x:    Math.random() * CONFIG.canvas.width,
+      y:    Math.random() * CONFIG.canvas.height,
+      size: Math.random() < 0.8 ? 1 : 2  /* most stars small, some bigger */
+    });
+  }
+
+  updateHUD();
+}
+
+function startGame() {
+  resizeCanvas();
+  initGame();
+  showScreen('game');
+  requestAnimationFrame(gameLoop); /* kick off the game loop */
+}
+
+
+/* ============================================================
+   INPUT
+   Keys tracked in the `keys` object — checked each frame.
+   Arrow keys / WASD = move. Space = shoot.
+   ============================================================ */
+window.addEventListener('keydown', (e) => {
+  keys[e.code] = true;
+  if (e.code === 'Space') e.preventDefault(); /* stop page scroll */
+  /* Space also advances dialogue if cutscene is active */
+  if (screens.cutscene.classList.contains('active') && e.code === 'Space') {
+    advanceDialogue();
+  }
+});
+window.addEventListener('keyup', (e) => { keys[e.code] = false; });
+
+
+/* ============================================================
+   DRAW: PLAYER SHIP — PLACEHOLDER RECTANGLE
+   Replace this entire function body with your real sprite:
+     ctx.drawImage(playerShipImg, x, y, 32, 32);
+     ctx.drawImage(playerFlameImg, x, y + 32, 32, 10);
+   Sprite sizes: ship = 32×32px  |  flame = 32×10px  (transparent PNG)
+   ============================================================ */
+function drawPlayerShip(x, y) {
+  const w   = CONFIG.player.width;   /* 32 */
+  const h   = CONFIG.player.height;  /* 32 */
+  const now = performance.now();
+  const flashing = now < playerFlashUntil;
+
+  /* Flicker opacity when hit */
+  if (flashing) ctx.globalAlpha = now % 80 < 40 ? 0.2 : 1.0;
+
+  /* ── Placeholder rectangle — SWAP WITH SPRITE ── */
+  ctx.fillStyle   = flashing ? '#ff8fab' : '#f5a7c7'; /* pink / hot-pink flash */
+  ctx.fillRect(x, y, w, h);
+
+  /* Dashed border so it reads as a placeholder box */
+  ctx.strokeStyle = '#fff0f8';
+  ctx.lineWidth   = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.setLineDash([]); /* reset dash */
+
+  /* Label: "SHIP 32×32" centred in the box */
+  ctx.fillStyle  = '#1a1035';
+  ctx.font       = '5px monospace';
+  ctx.textAlign  = 'center';
+  ctx.fillText('SHIP', x + w/2, y + h/2 - 2);
+  ctx.fillText('32×32', x + w/2, y + h/2 + 6);
+  ctx.textAlign  = 'left'; /* reset */
+
+  ctx.globalAlpha = 1.0;
+}
+
+
+/* ============================================================
+   DRAW: ENEMIES — PLACEHOLDER RECTANGLES
+   Replace each if/else branch with your real sprite:
+     ctx.drawImage(alienScoutImg,   x, y, 28, 28);
+     ctx.drawImage(alienBruiserImg, x, y, 28, 28);
+     ctx.drawImage(alienSwooперImg, x, y, 28, 28);
+   Sprite size for all three: 28×28px transparent PNG
+   ============================================================ */
+function drawEnemy(enemy) {
+  const w   = CONFIG.enemy.width;   /* 28 */
+  const h   = CONFIG.enemy.height;  /* 28 */
+  const x   = enemy.x;
+  const y   = enemy.y;
+  const now = performance.now();
+  const flashing = enemy.flashUntil && now < enemy.flashUntil;
+
+  /* Each type gets its own colour so you can tell them apart */
+  const colours = {
+    scout:   flashing ? '#ffffff' : '#7be38a',  /* lime green */
+    bruiser: flashing ? '#ffffff' : '#4cd964',  /* forest green */
+    swooper: flashing ? '#ffffff' : '#a8f0b0'   /* mint green */
+  };
+
+  /* ── Placeholder rectangle — SWAP WITH SPRITE ── */
+  ctx.fillStyle   = colours[enemy.type] || '#7be38a';
+  ctx.fillRect(x, y, w, h);
+
+  ctx.strokeStyle = '#1a1035';
+  ctx.lineWidth   = 1;
+  ctx.setLineDash([3, 3]);
+  ctx.strokeRect(x, y, w, h);
+  ctx.setLineDash([]);
+
+  /* Label shows the alien type name and size */
+  ctx.fillStyle  = '#1a1035';
+  ctx.font       = '4px monospace';
+  ctx.textAlign  = 'center';
+  ctx.fillText(enemy.type.toUpperCase(), x + w/2, y + h/2 - 2);
+  ctx.fillText('28×28', x + w/2, y + h/2 + 5);
+  ctx.textAlign  = 'left';
+}
+
+
+/* ============================================================
+   DRAW: ASTEROIDS — PLACEHOLDER RECTANGLES
+   Replace the placeholder block below with your real sprite:
+     ctx.save();
+     ctx.translate(ast.x, ast.y);
+     ctx.rotate(ast.angle);
+     const img = ast.radius > 48 ? asteroidAImg : asteroidBImg;
+     ctx.drawImage(img, -ast.radius, -ast.radius, ast.radius*2, ast.radius*2);
+     ctx.restore();
+   Sprite sizes:
+     Asteroid A (large): ~116×116px transparent PNG  (radius ≈ 58)
+     Asteroid B (small):  ~76×76px  transparent PNG  (radius ≈ 38)
+   ============================================================ */
+function drawAsteroid(ast) {
+  const now      = performance.now();
+  const flashing = ast.flashUntil && now < ast.flashUntil;
+  const r        = ast.radius;
+  const size     = r * 2; /* diameter as box width/height */
+
+  /* Blink logic — still works with the placeholder rect */
+  if (flashing) {
+    const period   = 1000 / CONFIG.asteroid.blinkHz;
+    const elapsed  = now - (ast.flashUntil - CONFIG.flash.duration);
+    const blinkOff = Math.floor(elapsed / period) % 2 === 1;
+    if (blinkOff) {
+      /* Off frame — just draw a peach outline */
+      ctx.strokeStyle = CONFIG.flash.asteroidColor;
+      ctx.lineWidth   = 3;
+      ctx.setLineDash([]);
+      ctx.strokeRect(ast.x - r, ast.y - r, size, size);
+      drawAsteroidHP(ast);
+      return;
+    }
+  }
+
+  /* ── Placeholder rectangle — SWAP WITH SPRITE ── */
+  ctx.fillStyle   = flashing ? '#ffcba4' : '#7a6a8a'; /* purple-grey / peach flash */
+  ctx.fillRect(ast.x - r, ast.y - r, size, size);
+
+  ctx.strokeStyle = '#b8a0cc';
+  ctx.lineWidth   = 1;
+  ctx.setLineDash([4, 4]);
+  ctx.strokeRect(ast.x - r, ast.y - r, size, size);
+  ctx.setLineDash([]);
+
+  /* Label: size variant (A = large, B = small) + pixel dimensions */
+  const label    = r > 48 ? 'ASTEROID A' : 'ASTEROID B';
+  const dimLabel = r > 48 ? '116×116' : '76×76';
+  ctx.fillStyle  = '#fff0f8';
+  ctx.font       = '6px monospace';
+  ctx.textAlign  = 'center';
+  ctx.fillText(label,    ast.x, ast.y - 4);
+  ctx.fillText(dimLabel, ast.x, ast.y + 6);
+  ctx.textAlign  = 'left';
+
+  drawAsteroidHP(ast);
+}
+
+/* HP pips — pink squares above the asteroid.
+   Filled = remaining HP. Dark = lost HP. */
+function drawAsteroidHP(ast) {
+  const total  = CONFIG.asteroid.hp;
+  const pipW   = 5, pipH = 4, gap = 2;
+  const totalW = total * (pipW + gap) - gap;
+  let px       = ast.x - totalW / 2;
+  const py     = ast.y - ast.radius - 12;
+  for (let i = 0; i < total; i++) {
+    ctx.fillStyle = i < ast.hp ? '#f5a7c7' : '#3d2f55';
+    ctx.fillRect(px, py, pipW, pipH);
+    px += pipW + gap;
+  }
+}
+
+
+/* ============================================================
+   DRAW: BULLET — PLACEHOLDER RECTANGLE
+   Replace with: ctx.drawImage(bulletImg, bullet.x, bullet.y, 4, 14);
+   Sprite size: 4×14px transparent PNG
+   ============================================================ */
+function drawBullet(bullet) {
+  /* ── Placeholder rectangle — SWAP WITH SPRITE ── */
+  ctx.fillStyle = '#d4b8f0'; /* lilac */
+  ctx.fillRect(bullet.x, bullet.y, CONFIG.bullet.width, CONFIG.bullet.height);
+}
+
+
+/* ============================================================
+   DRAW: STARS
+   Two brightness tiers — pink bright stars, dark purple dim ones.
+   ============================================================ */
+function drawStars() {
+  stars.forEach(s => {
+    ctx.fillStyle = s.size > 1 ? '#f5a7c7' : '#3d2f55'; /* bright / dim */
+    ctx.fillRect(s.x, s.y, s.size, s.size);
+  });
+}
+
+
+/* ============================================================
+   UPDATE: STARS
+   Scroll downward and wrap to top when off screen.
+   ============================================================ */
+function updateStars() {
+  stars.forEach(s => {
+    s.y += CONFIG.star.speed;
+    if (s.y > CONFIG.canvas.height) {
+      s.y = 0;
+      s.x = Math.random() * CONFIG.canvas.width; /* random x on wrap */
+    }
+  });
+}
+
+
+/* ============================================================
+   UPDATE: PLAYER
+   Reads keys object each frame.
+   Left/Right (or A/D) = move. Space = fire.
+   ============================================================ */
+function updatePlayer() {
+  if (keys['ArrowLeft'] || keys['KeyA']) player.x -= CONFIG.player.speed;
+  if (keys['ArrowRight'] || keys['KeyD']) player.x += CONFIG.player.speed;
+  /* Clamp to canvas edges */
+  player.x = Math.max(0, Math.min(CONFIG.canvas.width - player.width, player.x));
+  if (keys['Space']) tryFire();
+}
+
+/* tryFire — spawn a bullet if cooldown has elapsed */
+function tryFire() {
+  const now = performance.now();
+  if (now - lastShot < CONFIG.player.fireCooldown) return;
+  lastShot = now;
+  bullets.push({
+    x: player.x + player.width / 2 - CONFIG.bullet.width / 2, /* centred on ship */
+    y: player.y
+  });
+}
+
+
+/* ============================================================
+   UPDATE: BULLETS
+   Move upward each frame, remove when off the top of screen.
+   ============================================================ */
+function updateBullets() {
+  bullets.forEach(b => b.y -= CONFIG.bullet.speed);
+  bullets = bullets.filter(b => b.y + CONFIG.bullet.height > 0);
+}
+
+
+/* ============================================================
+   DIFFICULTY
+   getDifficulty() walks the CONFIG.difficulty tiers from the top
+   and returns the highest tier whose score threshold is met.
+   ============================================================ */
+function getDifficulty() {
+  const tiers = CONFIG.difficulty;
+  for (let i = tiers.length - 1; i >= 0; i--) {
+    if (score >= tiers[i].score) return tiers[i];
+  }
+  return tiers[0];
+}
+
+
+/* ============================================================
+   UPDATE: ENEMIES
+   Spawns on a timer, moves downward, culls off-screen.
+   Speed and spawn interval come from the current difficulty tier.
+   ============================================================ */
+function updateEnemies(timestamp) {
+  const diff = getDifficulty();
+  if (timestamp - lastSpawn > diff.spawnInterval) {
+    lastSpawn = timestamp;
+    spawnEnemy();
+  }
+  enemies.forEach(e => e.y += diff.enemySpeed);
+  enemies = enemies.filter(e => e.y < CONFIG.canvas.height + 10);
+}
+
+function spawnEnemy() {
+  const types = CONFIG.enemy.types;
+  const t     = types[Math.floor(Math.random() * types.length)];
+  const w     = CONFIG.enemy.width;
+  const h     = CONFIG.enemy.height;
+  const pad   = 6; /* extra breathing room between objects */
+
+  /* Try up to 10 positions — skip if it overlaps anything already on screen */
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const x = Math.random() * (CONFIG.canvas.width - w);
+    const y = -h;
+
+    /* Check against all existing enemies */
+    const hitsEnemy = enemies.some(e =>
+      rectsOverlap(x - pad, y - pad, w + pad*2, h + pad*2,
+                   e.x, e.y, w, h)
+    );
+    /* Check against all existing asteroids */
+    const hitsAsteroid = asteroids.some(a =>
+      circleRect(a.x, a.y, a.radius + pad,  x, y, w, h)
+    );
+
+    if (!hitsEnemy && !hitsAsteroid) {
+      enemies.push({ x, y, type: t.id, color: t.color, accent: t.accent, points: t.points, flashUntil: 0 });
+      return; /* placed successfully */
+    }
+  }
+  /* If all 10 attempts overlap, skip this spawn — screen is too crowded */
+}
+
+
+/* ============================================================
+   UPDATE: ASTEROIDS
+   Spawns on its own separate timer (slower than enemies).
+   Rocks spin as they fall. Speed from difficulty tier.
+   ============================================================ */
+
+/* makeAsteroidVerts — generate a randomised polygon for the rock.
+   Called once at spawn, stored on the object so shape stays stable. */
+function makeAsteroidVerts(r) {
+  const pointCount = 9;
+  const verts      = [];
+  for (let i = 0; i < pointCount; i++) {
+    const angle  = (i / pointCount) * Math.PI * 2;
+    const jitter = r * (0.75 + Math.random() * 0.35);
+    verts.push({ x: Math.cos(angle) * jitter, y: Math.sin(angle) * jitter });
+  }
+  return verts;
+}
+
+function spawnAsteroid() {
+  const r   = CONFIG.asteroid.minSize + Math.random() * (CONFIG.asteroid.maxSize - CONFIG.asteroid.minSize);
+  const pad = 10; /* extra breathing room */
+
+  /* Try up to 10 positions — skip if it overlaps anything already on screen */
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const x = r + Math.random() * (CONFIG.canvas.width - r * 2);
+    const y = -r;
+
+    /* Check against all existing asteroids (circle vs circle) */
+    const hitsAsteroid = asteroids.some(a => {
+      const dx = a.x - x, dy = a.y - y;
+      return Math.sqrt(dx*dx + dy*dy) < a.radius + r + pad;
+    });
+    /* Check against all existing enemies (circle vs rect) */
+    const hitsEnemy = enemies.some(e =>
+      circleRect(x, y, r + pad,  e.x, e.y, CONFIG.enemy.width, CONFIG.enemy.height)
+    );
+
+    if (!hitsAsteroid && !hitsEnemy) {
+      asteroids.push({
+        x, y,
+        radius:     r,
+        hp:         CONFIG.asteroid.hp,
+        angle:      Math.random() * Math.PI * 2,
+        spinSpeed:  (Math.random() - 0.5) * 0.015,
+        verts:      makeAsteroidVerts(r),
+        flashUntil: 0
+      });
+      return; /* placed successfully */
+    }
+  }
+  /* If all 10 attempts overlap, skip this spawn — screen is too crowded */
+}
+
+function updateAsteroids(timestamp) {
+  if (timestamp - lastAsteroidSpawn > CONFIG.asteroid.spawnInterval) {
+    lastAsteroidSpawn = timestamp;
+    spawnAsteroid();
+  }
+  const diff = getDifficulty();
+  asteroids.forEach(a => {
+    a.y     += diff.asteroidSpeed;
+    a.angle += a.spinSpeed;
+  });
+  asteroids = asteroids.filter(a => a.y - a.radius < CONFIG.canvas.height + 10);
+}
+
+
+/* ============================================================
+   COLLISION DETECTION
+   rectsOverlap — axis-aligned bounding box check (bullets ↔ enemies)
+   circleRect   — circle vs rectangle check (asteroids ↔ everything)
+
+   Order of checks each frame:
+   1. Bullets vs enemies  → enemy dies, bullet consumed, score up
+   2. Bullets vs asteroids → asteroid HP down, blink, bullet consumed
+   3. Enemies vs player   → lose a life, enemy removed, player flashes
+   4. Asteroids vs player → lose a life, asteroid removed, player flashes
+   ============================================================ */
+function rectsOverlap(ax, ay, aw, ah, bx, by, bw, bh) {
+  return ax < bx+bw && ax+aw > bx && ay < by+bh && ay+ah > by;
+}
+
+function circleRect(cx, cy, cr, rx, ry, rw, rh) {
+  /* Find the closest point on the rect to the circle center */
+  const nearX = Math.max(rx, Math.min(cx, rx+rw));
+  const nearY = Math.max(ry, Math.min(cy, ry+rh));
+  const dx    = cx - nearX;
+  const dy    = cy - nearY;
+  return dx*dx + dy*dy < cr*cr;
+}
+
+function checkCollisions() {
+  const now = performance.now();
+
+  /* ── Bullets ── */
+  for (let bi = bullets.length - 1; bi >= 0; bi--) {
+    const b   = bullets[bi];
+    let   hit = false;
+
+    /* Bullet vs enemy */
+    for (let ei = enemies.length - 1; ei >= 0; ei--) {
+      const e = enemies[ei];
+      if (rectsOverlap(b.x, b.y, CONFIG.bullet.width, CONFIG.bullet.height,
+                       e.x, e.y, CONFIG.enemy.width,  CONFIG.enemy.height)) {
+        e.flashUntil = now + CONFIG.flash.duration; /* trigger mint flash */
+        enemies.splice(ei, 1);
+        score += e.points;
+        updateHUD();
+        hit = true;
+        break;
+      }
+    }
+    if (hit) { bullets.splice(bi, 1); continue; }
+
+    /* Bullet vs asteroid */
+    for (let ai = asteroids.length - 1; ai >= 0; ai--) {
+      const a = asteroids[ai];
+      if (circleRect(a.x, a.y, a.radius, b.x, b.y, CONFIG.bullet.width, CONFIG.bullet.height)) {
+        bullets.splice(bi, 1);
+        a.hp        -= 1;
+        a.flashUntil = now + CONFIG.flash.duration; /* trigger peach blink */
+        if (a.hp <= 0) {
+          asteroids.splice(ai, 1);
+          score += CONFIG.asteroid.points;
+          updateHUD();
+        }
+        break;
+      }
+    }
+  }
+
+  /* ── Enemies vs Player ── */
+  for (let ei = enemies.length - 1; ei >= 0; ei--) {
+    const e = enemies[ei];
+    if (rectsOverlap(player.x, player.y, player.width, player.height,
+                     e.x,      e.y,      CONFIG.enemy.width, CONFIG.enemy.height)) {
+      enemies.splice(ei, 1);
+      lives           -= 1;
+      playerFlashUntil = now + CONFIG.flash.playerDuration;
+      updateHUD();
+      if (lives <= 0) endGame();
+    }
+  }
+
+  /* ── Asteroids vs Player ── */
+  for (let ai = asteroids.length - 1; ai >= 0; ai--) {
+    const a = asteroids[ai];
+    if (circleRect(a.x, a.y, a.radius, player.x, player.y, player.width, player.height)) {
+      asteroids.splice(ai, 1);
+      lives           -= 1;
+      playerFlashUntil = now + CONFIG.flash.playerDuration;
+      updateHUD();
+      if (lives <= 0) endGame();
+    }
+  }
+}
+
+
+/* ============================================================
+   HUD UPDATE
+   Called whenever score or lives change.
+   Updates the DOM elements above the canvas.
+   ============================================================ */
+function updateHUD() {
+  document.getElementById('score-display').textContent     = score;
+  document.getElementById('high-score-display').textContent = Math.max(highScore, score);
+  /* ♥ repeated per life — swap with heart.png <img> tags if you want icon art */
+  document.getElementById('lives-display').textContent     = '♥ '.repeat(Math.max(lives, 0)).trim();
+}
+
+
+/* ============================================================
+   MAIN LOOP
+   Called every frame via requestAnimationFrame.
+   Order: clear → draw bg → update → draw entities → repeat.
+   ============================================================ */
+function gameLoop(timestamp) {
+  if (!gameRunning) return; /* stop if game has ended */
+
+  /* Clear the canvas */
+  ctx.clearRect(0, 0, CONFIG.canvas.width, CONFIG.canvas.height);
+
+  /* Background — stars scroll behind everything */
+  drawStars();
+  updateStars();
+
+  /* Update all entities */
+  updatePlayer();
+  updateBullets();
+  updateEnemies(timestamp);
+  updateAsteroids(timestamp);
+  checkCollisions();
+
+  /* Draw all entities (asteroids behind bullets behind enemies behind player) */
+  asteroids.forEach(drawAsteroid);
+  bullets.forEach(drawBullet);
+  enemies.forEach(drawEnemy);
+  drawPlayerShip(player.x, player.y);
+
+  requestAnimationFrame(gameLoop); /* request next frame */
+}
+
+
+/* ============================================================
+   GAME OVER
+   Stops the loop, saves high score, shows the game over screen.
+   ============================================================ */
+async function endGame() {
+  gameRunning = false;
+  await saveHighScore(score);
+  document.getElementById('final-score').textContent = score;
+  document.getElementById('final-high').textContent  = highScore;
+  showScreen('gameover');
+}
+
+
+/* ============================================================
+   BUTTON WIRING
+   ============================================================ */
+document.getElementById('start-btn').addEventListener('click', startCutscene);   /* title → cutscene */
+document.getElementById('restart-btn').addEventListener('click', startGame);      /* gameover → game */
+
+
+/* ============================================================
+   INIT — runs once on page load
+   ============================================================ */
+loadHighScore(); /* load saved high score from storage */
+resizeCanvas();  /* set canvas size before first frame */
+</script>
+
+</body>
+</html>
